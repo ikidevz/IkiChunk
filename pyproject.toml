@@ -1,6 +1,6 @@
 [project]
 name = "ikichunk"
-version = "0.2.0"
+version = "1.0.0"
 description = "Enterprise-portable Swiss-army-knife scripting toolkit for data engineering and systems automation."
 readme = { file = "README.MD", content-type = "text/markdown" }
 requires-python = ">=3.9"
