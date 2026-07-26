@@ -1,0 +1,13 @@
+**/__pycache__/
+logs/
+bin/
+dist/
+data/
+structure.py
+.pypirc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.vscode/
+.env

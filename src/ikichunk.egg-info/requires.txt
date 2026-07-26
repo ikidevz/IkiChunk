@@ -1,0 +1,16 @@
+
+[full]
+PyYAML>=6.0
+pyarrow>=14.0
+rich>=13.0
+tqdm>=4.0
+zstandard>=0.22
+
+[parquet]
+pyarrow>=14.0
+
+[yaml]
+PyYAML>=6.0
+
+[zstd]
+zstandard>=0.22

@@ -1,0 +1,2 @@
+[console_scripts]
+ikichunk = ikichunk.cli:main

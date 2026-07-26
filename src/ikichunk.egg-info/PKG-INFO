@@ -1,0 +1,615 @@
+Metadata-Version: 2.4
+Name: ikichunk
+Version: 0.2.0
+Summary: Enterprise-portable Swiss-army-knife scripting toolkit for data engineering and systems automation.
+Author: ikidevz
+License: MIT
+Project-URL: Homepage, https://github.com/yourusername/ikichunk
+Project-URL: Repository, https://github.com/yourusername/ikichunk.git
+Project-URL: Documentation, https://github.com/yourusername/ikichunk
+Project-URL: Issues, https://github.com/yourusername/ikichunk/issues
+Keywords: data-engineering,partitioning,streaming,compression,parallel-processing,scripting
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: System Administrators
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Natural Language :: English
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: System :: Systems Administration
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Provides-Extra: yaml
+Requires-Dist: PyYAML>=6.0; extra == "yaml"
+Provides-Extra: parquet
+Requires-Dist: pyarrow>=14.0; extra == "parquet"
+Provides-Extra: zstd
+Requires-Dist: zstandard>=0.22; extra == "zstd"
+Provides-Extra: full
+Requires-Dist: PyYAML>=6.0; extra == "full"
+Requires-Dist: pyarrow>=14.0; extra == "full"
+Requires-Dist: rich>=13.0; extra == "full"
+Requires-Dist: tqdm>=4.0; extra == "full"
+Requires-Dist: zstandard>=0.22; extra == "full"
+Dynamic: license-file
+
+# IKiChunk
+
+**Enterprise-portable Swiss-army-knife scripting toolkit** for Data Engineers, Data Architects, Data Scientists, Software Engineers, and Systems Engineers.
+
+One facade, zero required dependencies—tackle common data engineering tasks with minimal code.
+
+![Image_Cover](assets/image.png)
+
+```python
+from ikichunk import partition   # the only import most users need
+
+parts = partition.smart_split("big.csv", goal="parallel")
+results = partition.pmap(process, parts, workers=len(parts))
+```
+
+Every method documented below is real, production-tested code—not a spec. See `IKiChunk-Codebase-v2.md` for the full source and `IKiChunk-Examples.md` for worked examples against a 2,000,000-row dataset.
+
+---
+
+## Table of Contents
+
+1. [Installation](#installation)
+2. [Quickstart](#quickstart)
+3. [Core Concepts](#core-concepts)
+4. [Feature Reference](#feature-reference)
+   - [I/O](#io)
+   - [Inspect](#inspect)
+   - [Config & Secrets](#config--secrets)
+   - [Logging](#logging)
+   - [Time](#time)
+   - [Retry](#retry)
+   - [Parallel (pmap)](#parallel-pmap)
+   - [Partition & Chunk](#partition--chunk-the-namesake-feature)
+   - [Hash & Integrity](#hash--integrity)
+   - [Compress](#compress)
+   - [Archive](#archive)
+   - [Platform & Portability](#platform--portability)
+   - [Process](#process)
+   - [Net](#net)
+   - [Watch](#watch)
+   - [Template](#template)
+   - [Validate](#validate)
+5. [Extensibility](#extensibility)
+6. [CLI](#cli)
+7. [Known Limitations](#known-limitations)
+8. [Project Structure](#project-structure)
+
+---
+
+## Installation
+
+```bash
+# from the project root (contains pyproject.toml and src/)
+pip install -e .
+
+# with optional format/codec support
+pip install -e ".[yaml]"       # PyYAML for .yaml/.yml
+pip install -e ".[parquet]"    # pyarrow for .parquet
+pip install -e ".[zstd]"       # zstandard for algo="zstd" compression
+pip install -e ".[full]"       # all of the above + rich/tqdm for nicer CLI output
+```
+
+Requires Python ≥3.9. The core package has **zero required dependencies**—everything below works out of the box on a bare Python install.
+
+---
+
+## Quickstart
+
+```python
+from ikichunk import partition
+
+# 1. Inspect unknown data — safe on config, files, DataFrames, lists, dicts
+print(partition.inspect("data.csv"))
+
+# 2. Safe, atomic write with a backup of the previous version
+partition.write("out.json", {"status": "ok"}, backup=True)
+
+# 3. Split a big file without loading it into memory
+parts = partition.split_file("big.csv", by="rows", rows=100_000)
+
+# 4. Or let it decide the split shape for you
+parts = partition.smart_split("big.csv", goal="parallel")
+
+# 5. Process each partition in parallel
+results = partition.pmap(my_transform, parts, workers=len(parts))
+
+# 6. Verify nothing got corrupted along the way
+m = partition.manifest(parts)
+ok = all(partition.verify(f["path"], f["hash"]) for f in m["files"])
+```
+
+---
+
+## Core Concepts
+
+- **The facade.** `partition` is a ready-to-use singleton instance of the `Partition` class. Every feature is reachable as `partition.<method>`—you never import a submodule directly for normal use.
+- **No silent fallback.** Ambiguous formats, unpicklable process-pool arguments, and shell-metacharacter strings raise clearly instead of silently guessing.
+- **Streaming-first.** Anything that touches "big" data (`stream`, `split_file`, `hash`, `download`) is designed to avoid loading entire files into memory.
+- **Instantiable, not just a singleton.** Need an isolated instance (e.g., for tests)?
+
+```python
+from ikichunk import Partition
+
+test_partition = Partition(log_level="DEBUG", env_prefix="TEST_")
+```
+
+---
+
+## Feature Reference
+
+### I/O
+
+```python
+partition.read(path, fmt=None, **kwargs) -> Any
+partition.write(path, data, *, atomic=True, backup=False, fmt=None, **kwargs) -> str
+partition.exists(path) -> bool
+partition.ensure_dir(path) -> str
+partition.list_files(path=".", pattern="*", recursive=False) -> list[str]
+partition.ls(...)          # alias for list_files
+partition.cat(path) -> str # alias for read(path, fmt="text")
+partition.stream(path, fmt=None, chunk_size=None) -> Iterator[Any]
+```
+
+Supported formats: `json`, `yaml` _(extra)_, `csv`, `tsv`, `parquet` _(extra)_, `pickle`, `text`—auto-detected from the file extension or passed explicitly via `fmt=`.
+
+```python
+partition.write("report.json", {"rows": 42}, atomic=True, backup=True)
+data = partition.read("report.json")
+
+# Streaming: constant memory regardless of file size
+for row in partition.stream("huge.csv"):
+    process(row)
+
+# Unknown extensions raise instead of silently guessing "text"
+partition.read("data.xyz")
+# → UnknownFormatError: Cannot determine format for 'data.xyz' ...
+```
+
+**Extending formats at runtime:**
+
+```python
+from ikichunk.io.formats import FormatHandler
+
+def read_upper(path, kwargs): return path.read_text().upper()
+def write_upper(path, data, kwargs): path.write_text(str(data).upper())
+
+partition.register_format("shout", FormatHandler("shout", read_upper, write_upper), extensions=[".shout"])
+partition.write("out.shout", "hello")
+partition.read("out.shout")  # "HELLO"
+```
+
+---
+
+### Inspect
+
+```python
+partition.inspect(obj_or_path, sample=3, **kwargs) -> dict
+partition.head(obj_or_path, n=5, **kwargs) -> Any
+```
+
+Works on file paths, lists, dicts, strings, and pandas DataFrames (if installed). Automatically redacts values whose keys look like secrets (`*_key`, `*_token`, `*_secret`, `*_password`, etc.):
+
+```python
+partition.inspect({"user": "alice", "api_key": "sk-live-..."})
+# {'type': 'dict', 'keys': ['user', 'api_key'],
+#  'sample': {'user': 'alice', 'api_key': '<redacted>'}}
+```
+
+`sample=` controls how many items are included—set it high enough (`sample=len(obj)`) to see all keys, not just the first few.
+
+---
+
+### Config & Secrets
+
+```python
+partition.config(*sources, secrets=None, env_prefix=None, **kwargs) -> dict
+partition.env(key, default=None, cast=str) -> Any
+```
+
+Merge order (later values override earlier ones): files → secrets → environment variables.
+
+```python
+cfg = partition.config("config.yaml", secrets=".env", env_prefix="APP_")
+db_host = partition.env("DB_HOST", default="localhost")
+port = partition.env("PORT", default=8080, cast=int)
+```
+
+Secrets loaded via `secrets=` are flagged for redaction whenever the config dict passes through `inspect()`. They are never cached to disk beyond the source file.
+
+---
+
+### Logging
+
+```python
+partition.log(name=None, level=None, **kwargs) -> logging.Logger
+```
+
+Zero-config, console-friendly, structured output.
+
+```python
+log = partition.log("etl", level="DEBUG")
+log.info("processed %d rows", 1000)
+```
+
+---
+
+### Time
+
+```python
+partition.now(fmt="%Y-%m-%d %H:%M:%S") -> str
+partition.timer(name="block")          # context manager
+partition.duration(seconds) -> str     # human-readable
+```
+
+```python
+with partition.timer("load"):
+    df = partition.read("big.csv")
+# prints: [load] 3s
+
+print(partition.duration(3725))  # "1h 2m 5s"
+```
+
+---
+
+### Retry
+
+```python
+@partition.retry(tries=3, delay=1.0, backoff=2.0, exceptions=(Exception,))
+def flaky_call(): ...
+```
+
+Exponential backoff decorator that composes cleanly with `net.fetch` for retry-on-failure HTTP calls:
+
+```python
+@partition.retry(tries=3, delay=1.0, exceptions=(TimeoutError,))
+def fetch_with_retry(url):
+    return partition.fetch(url, timeout=5)
+```
+
+---
+
+### Parallel (pmap)
+
+```python
+partition.pmap(func, items, *, workers=None, backend="thread"|"process",
+                retries=0, progress=False, ordered=True) -> list
+```
+
+```python
+results = partition.pmap(transform, records, workers=8, retries=2, progress=True)
+```
+
+- `backend="thread"` (default)—no picklability constraint, best for I/O-bound work.
+- `backend="process"`—for CPU-bound work. Both `func` and every item must be picklable (no lambdas or closures). A clear `PartitionParallelError` is raised at call time if they aren't, rather than a raw multiprocessing traceback.
+
+```python
+def region_revenue(part_path):        # must be a top-level function for backend="process"
+    ...
+
+partition.pmap(region_revenue, parts, workers=4, backend="process")
+```
+
+---
+
+### Partition & Chunk _(the namesake feature)_
+
+```python
+partition.split_file(path, *, by="size"|"rows"|"count", size=None, rows=None,
+                      count=None, out_dir=None, fmt=None, prefix=None) -> list[str]
+partition.smart_split(path, *, goal="parallel"|"memory-safe"|"storage",
+                       workers=None, out_dir=None, fmt=None, explain=False) -> list[str]
+partition.chunks(iterable, size) -> Iterator[list]
+partition.manifest(paths, *, hash_algo="sha256") -> dict
+```
+
+**Manual splitting**—three strategies, all streaming (never load whole source files into memory):
+
+```python
+partition.split_file("big.csv", by="size", size="256MB", out_dir="parts/")
+partition.split_file("big.csv", by="rows", rows=100_000, out_dir="parts/")
+partition.split_file("big.csv", by="count", count=8, out_dir="parts/")  # exact even split
+```
+
+`by="size"` is a raw byte-level split—fast and works on any file, but partitions may cut mid-row for row-based formats. `by="rows"`/`by="count"` are row-aware for `csv`/`tsv` and repeat the header in every partition by default.
+
+**Auto-strategy splitting**—inspects the file and system, picks an optimal shape for you:
+
+```python
+parts = partition.smart_split("big.csv", goal="parallel")       # count = CPU count
+parts = partition.smart_split("big.csv", goal="memory-safe")    # size capped under available RAM
+parts = partition.smart_split("big.csv", goal="storage")        # 100MB parts, object-storage sized
+
+# See the reasoning, not just the result:
+parts, why = partition.smart_split("big.csv", goal="parallel", explain=True)
+print(why)  # {'goal': 'parallel', 'cpu_count': 8, 'chosen_strategy': {...}, 'partition_count': 8, ...}
+```
+
+**Generic in-memory chunking**—feeds `pmap`:
+
+```python
+for batch in partition.chunks(records, size=500):
+    partition.pmap(transform, batch, workers=8)
+```
+
+**Manifests**—an auditable record of a partition batch:
+
+```python
+m = partition.manifest(parts)
+# {'algo': 'sha256', 'files': [{'path': ..., 'size_bytes': ..., 'hash': ...}, ...]}
+partition.write("manifest.json", m)
+```
+
+**Extending goals at runtime:**
+
+```python
+def goal_tiny(file_size, info, workers):
+    return {"by": "size", "size": 1024 * 1024}  # force 1MB partitions
+
+partition.register_split_goal("tiny", goal_tiny)
+partition.smart_split("big.csv", goal="tiny")
+```
+
+---
+
+### Hash & Integrity
+
+```python
+partition.hash(path_or_bytes, algo="sha256") -> str
+partition.verify(path, expected_hash, algo="sha256") -> bool
+```
+
+Streams the file in fixed-size blocks—no full-file memory load.
+
+```python
+h = partition.hash("part1.csv")
+assert partition.verify("part1.csv", h)   # True — unless the file changed
+```
+
+Typical use: verify a `manifest()` after copying or transferring partitions to another location.
+
+```python
+manifest = partition.read("manifest.json")
+for entry in manifest["files"]:
+    if not partition.verify(entry["path"], entry["hash"]):
+        raise RuntimeError(f"corrupted: {entry['path']}")
+```
+
+---
+
+### Compress
+
+```python
+partition.compress(path, *, algo="gzip"|"zip"|"zstd", out=None, keep_original=True) -> str
+partition.decompress(path, *, out=None) -> str
+```
+
+`gzip` and `zip` are in the standard library. `algo="zstd"` requires `pip install ikichunk[zstd]`—attempting it without the extra raises a `MissingDependencyError` with the exact install command.
+
+```python
+gz_path = partition.compress("part1.csv", algo="gzip")
+restored = partition.decompress(gz_path, out="restored.csv")
+```
+
+**Extending codecs at runtime** via `partition.register_codec(name, codec)` with a `storage.codecs.Codec(name, default_ext, compress_fn, decompress_fn)`.
+
+---
+
+### Archive
+
+```python
+partition.archive(source, out_path, *, fmt="tar.gz"|"zip") -> str
+partition.extract(archive_path, *, out_dir=None) -> str
+```
+
+Distinct from `compress()`—this bundles a **directory** (or multiple files) into a single archive, rather than shrinking one file.
+
+```python
+partition.archive("parts/", "parts_batch.tar.gz")
+partition.extract("parts_batch.tar.gz", out_dir="restored/")
+```
+
+`extract()` refuses to write outside `out_dir` (zip-slip guard)—this is a hard rule, not configurable.
+
+---
+
+### Platform & Portability
+
+```python
+partition.platform_info() -> dict
+partition.which(cmd) -> str | None
+partition.normalize_path(path) -> str
+```
+
+```python
+info = partition.platform_info()
+# {'os': 'Linux', 'cpu_count': 8, 'available_memory_bytes': ..., 'ikichunk_version': '0.2.0', ...}
+
+if partition.which("docker") is None:
+    raise RuntimeError("docker not found on PATH")
+```
+
+---
+
+### Process
+
+```python
+partition.is_running(pid) -> bool
+partition.kill(pid, *, timeout=5, force=False) -> bool
+partition.wait_for_port(host, port, *, timeout=30, interval=0.5) -> bool
+partition.is_port_open(host, port, *, timeout=1) -> bool
+```
+
+Checks and signals processes—**not** a supervisor. It never restarts or daemonizes.
+
+```python
+partition.run(["systemctl", "restart", "myapp"])
+if partition.wait_for_port("localhost", 8080, timeout=30):
+    log.info("service is up")
+```
+
+`kill()` sends `SIGTERM` first, polls up to `timeout` seconds, and only sends `SIGKILL` if `force=True` and the process is still alive.
+
+---
+
+### Net
+
+```python
+partition.fetch(url, *, timeout=10, headers=None) -> bytes | str
+partition.download(url, path, *, timeout=30, progress=False) -> str
+partition.reachable(host, port=None, *, timeout=2) -> bool
+```
+
+Built on stdlib `urllib`—**not** a `requests` replacement (no sessions, auth flows, or pagination). Covers the "I just need to fetch one thing" case.
+
+```python
+if partition.reachable("api.example.com", 443):
+    data = partition.fetch("https://api.example.com/status")
+
+partition.download("https://example.com/dataset.csv", "dataset.csv", progress=True)
+```
+
+`download()` streams directly to a temp file and atomically renames into place—a failed download never leaves a corrupted partial file.
+
+---
+
+### Watch
+
+```python
+partition.watch(path, *, on_change=None, interval=1.0, recursive=False) -> WatchHandle
+partition.watch_once(path, *, since=None) -> bool
+```
+
+Poll-based (mtime + size), not OS-native filesystem events—portable across every OS with zero dependencies.
+
+```python
+handle = partition.watch("config/", on_change=lambda p: reload_config(), interval=1.0)
+# ... later
+handle.stop()
+```
+
+---
+
+### Template
+
+```python
+partition.render(template, variables, *, out=None, strict=True) -> str
+```
+
+Variable substitution only (stdlib `string.Template`, `$var` syntax)—**not** a templating engine. No loops or conditionals.
+
+```python
+partition.render("app.env.tmpl", {"DB_HOST": partition.env("DB_HOST")}, out="app.env")
+```
+
+`strict=True` (default) raises on a missing variable instead of silently leaving it unrendered. Pass `strict=False` to allow partial renders.
+
+---
+
+### Validate
+
+```python
+partition.require(condition, msg="Requirement failed")
+partition.not_none(value, name="value") -> value
+```
+
+```python
+partition.require(len(records) > 0, "no records loaded")
+config_val = partition.not_none(cfg.get("api_key"), name="api_key")
+```
+
+---
+
+## Extensibility
+
+Every registry-backed feature above (`register_format`, `register_codec`, `register_split_goal`, `register_inspector`) adds new capabilities without editing the library source. The facade has one more general mechanism:
+
+```python
+def double(x):
+    return x * 2
+
+partition.register("double", double)
+partition.double(21)  # 42
+
+# Refuses to silently clobber an existing method:
+partition.register("read", lambda x: x)
+# ValueError: 'read' is already a facade method/attribute
+```
+
+**Independent instances** for testing or multi-configuration use:
+
+```python
+from ikichunk import Partition
+
+worker_partition = Partition(log_level="DEBUG", env_prefix="WORKER_")
+```
+
+**Pip-installable plugins** register automatically via an `ikichunk.plugins` setuptools entry point, discovered at import time—no manual `register()` call needed for third-party packages.
+
+---
+
+## CLI
+
+```bash
+ikichunk inspect data.csv
+ikichunk ls . -r -p "*.json"
+ikichunk split big.csv --by size --size 256MB --out-dir parts/
+ikichunk smart-split big.csv --goal parallel --out-dir parts/
+ikichunk wait-for-port localhost 8080 --timeout 30
+ikichunk archive parts/ parts.tar.gz
+ikichunk platform
+ikichunk version
+```
+
+Every subcommand maps 1:1 to a facade method—the CLI carries no logic the Python API doesn't also expose. Run `ikichunk --help` for the full list of available subcommands.
+
+---
+
+## Known Limitations
+
+- `split_file(by="count")` on row-based formats (CSV/TSV) does two streaming passes—at most one partition's worth of rows is held in memory at a time, not the whole file. `by="rows"`/`by="size"` are single-pass throughout.
+- `net` and `template` are deliberately minimal—reach for `requests`/`httpx` or `Jinja2` if you need sessions, auth flows, or templating logic.
+- `watch()` is poll-based, not OS-native events—suitable for config-reload use cases, not designed for high-frequency, low-latency file watching at scale.
+- `smart_split(goal="memory-safe")` uses a heuristic safety margin (10% of available RAM, 64MB floor), not a guaranteed bound—tune it via `register_split_goal` if your workload needs stricter guarantees.
+
+---
+
+## Project Structure
+
+```
+ikichunk/
+├── pyproject.toml
+└── src/
+    └── ikichunk/
+        ├── __init__.py         # exports `partition` (singleton) and `Partition` (class)
+        ├── facade.py           # Partition class — the single public entry point
+        ├── exceptions.py       # centralized custom exceptions
+        ├── io/                 # read/write/stream — Strategy-pattern format registry
+        ├── inspection/         # inspect/head — type-dispatch registry
+        ├── configuration/      # config/env
+        ├── observability/      # log/now/timer/duration
+        ├── resilience/         # retry
+        ├── concurrency/        # pmap
+        ├── partitioning/       # split_file/smart_split/chunks/manifest — the namesake package
+        ├── integrity/          # hash/verify
+        ├── storage/            # compress/decompress/archive/extract — Strategy-pattern codecs
+        ├── system/             # platform_info/process/shell
+        ├── net/                # fetch/download/reachable
+        ├── automation/         # watch/render
+        ├── validation/         # require/not_none
+        ├── plugins/            # entry-point plugin discovery
+        └── cli/                # Command-pattern CLI, thin wrapper over the facade
+```
+
+See `IKiChunk-Blueprint.md` for design rationale, `IKiChunk-Codebase-v2.md` for the full source, and `IKiChunk-Examples.md` for executed examples with output captured against a real 2,000,000-row dataset.
