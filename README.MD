@@ -50,17 +50,10 @@ Every method documented below is real, production-tested code—not a spec. See 
 ## Installation
 
 ```bash
-# from the project root (contains pyproject.toml and src/)
-pip install -e .
-
-# with optional format/codec support
-pip install -e ".[yaml]"       # PyYAML for .yaml/.yml
-pip install -e ".[parquet]"    # pyarrow for .parquet
-pip install -e ".[zstd]"       # zstandard for algo="zstd" compression
-pip install -e ".[full]"       # all of the above + rich/tqdm for nicer CLI output
+pip install ikichunk
 ```
 
-Requires Python ≥3.9. The core package has **zero required dependencies**—everything below works out of the box on a bare Python install.
+Requires Python ≥3.9. The core package has **no required dependencies**—everything below works out of the box on a bare Python install.
 
 ---
 
