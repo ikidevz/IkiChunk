@@ -199,8 +199,8 @@ def test_synthetic_tabular_and_binary_generators(temp_workspace):
         str(temp_workspace / "sales.parquet"), rows=8)
     assert Path(parquet_path).exists()
     parquet_data = partition.read(parquet_path)
-    parquet_rows = parquet_data.to_dict("records") if hasattr(
-        parquet_data, "to_dict") else parquet_data
+    parquet_rows = parquet_data.to_dicts() if hasattr(
+        parquet_data, "to_dicts") else parquet_data
     assert len(parquet_rows) == 8
     assert parquet_rows[0]["region"] in {
         "us-east", "us-west", "eu-west", "eu-central", "apac"}
@@ -210,6 +210,62 @@ def test_synthetic_tabular_and_binary_generators(temp_workspace):
     assert Path(pickle_path).exists()
     payload = partition.read(pickle_path)
     assert payload["rows"][0]["sku"].startswith("SKU-")
+
+
+def test_parquet_read_returns_polars_dataframe_and_inspects_cleanly(temp_workspace):
+    pl = pytest.importorskip("polars")
+
+    spec = importlib.util.spec_from_file_location(
+        "synthetic_data",
+        Path(__file__).resolve().parents[1] /
+        "examples" / "00_synthetic_data.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    parquet_path = module.generate_sales_parquet(
+        str(temp_workspace / "sales.parquet"), rows=5)
+    df = partition.read(parquet_path)
+    assert isinstance(df, pl.DataFrame)
+    assert len(df) == 5
+
+    info = partition.inspect(df, sample=2)
+    assert info["type"] == "DataFrame"
+    assert info["shape"] == (5, 6)
+    assert "region" in info["columns"]
+    assert len(info["sample"]) == 2
+
+
+def test_feather_and_avro_roundtrip(temp_workspace):
+    pl = pytest.importorskip("polars")
+
+    df = pl.DataFrame({"sku": ["SKU-1", "SKU-2"], "stock": [10, 20]})
+
+    feather_path = temp_workspace / "catalog.feather"
+    partition.write(str(feather_path), df)
+    restored = partition.read(str(feather_path))
+    assert isinstance(restored, pl.DataFrame)
+    assert restored.to_dicts() == df.to_dicts()
+
+    avro_path = temp_workspace / "catalog.avro"
+    partition.write(str(avro_path), df)
+    restored_avro = partition.read(str(avro_path))
+    assert isinstance(restored_avro, pl.DataFrame)
+    assert restored_avro.to_dicts() == df.to_dicts()
+
+
+def test_excel_roundtrip(temp_workspace):
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("fastexcel")
+    pytest.importorskip("xlsxwriter")
+
+    df = pl.DataFrame({"sku": ["SKU-1", "SKU-2"], "price": [9.99, 19.99]})
+    excel_path = temp_workspace / "catalog.xlsx"
+    partition.write(str(excel_path), df)
+    restored = partition.read(str(excel_path))
+    assert isinstance(restored, pl.DataFrame)
+    assert restored.to_dicts() == df.to_dicts()
 
 
 def test_split_tsv_file_preserves_columns(temp_workspace):
@@ -226,6 +282,23 @@ def test_split_tsv_file_preserves_columns(temp_workspace):
     first_rows = partition.read(parts[0])
     assert first_rows[0]["sku"] == "SKU-1"
     assert first_rows[0]["category"] == "Tools"
+
+
+def test_inspect_path_objects_and_recursive_redaction(temp_workspace):
+    payload_path = temp_workspace / "payload.json"
+    payload_path.write_text(
+        json.dumps({"user": "alice", "api_key": "secret",
+                   "nested": {"token": "abc"}}),
+        encoding="utf-8",
+    )
+
+    file_info = partition.inspect(payload_path)
+    assert file_info["type"] == "dict"
+    assert file_info["sample"]["api_key"] == "<redacted>"
+    assert file_info["sample"]["nested"]["token"] == "<redacted>"
+
+    list_info = partition.inspect([{"api_key": "secret"}, {"user": "bob"}])
+    assert list_info["sample"][0]["api_key"] == "<redacted>"
 
 
 def test_unknown_format_raises():

@@ -125,9 +125,7 @@ def generate_product_catalog_tsv(path: str, rows: int, seed: int = SEED) -> str:
 
 
 def generate_sales_parquet(path: str, rows: int, seed: int = SEED) -> str:
-    import pandas as pd
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+    import polars as pl
 
     rng = random.Random(seed + 5)
     regions = ["us-east", "us-west", "eu-west", "eu-central", "apac"]
@@ -142,10 +140,10 @@ def generate_sales_parquet(path: str, rows: int, seed: int = SEED) -> str:
             "unit_price": round(rng.uniform(4.99, 299.99), 2),
             "timestamp": f"2026-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}T{rng.randint(0, 23):02d}:{rng.randint(0, 59):02d}:00Z",
         })
-    table = pa.Table.from_pandas(pd.DataFrame(data))
+    df = pl.DataFrame(data)
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, p)
+    df.write_parquet(p)
     return str(p)
 
 

@@ -114,7 +114,9 @@ partition.cat(path) -> str # alias for read(path, fmt="text")
 partition.stream(path, fmt=None, chunk_size=None) -> Iterator[Any]
 ```
 
-Supported formats: `json`, `yaml` _(extra)_, `csv`, `tsv`, `parquet` _(extra)_, `pickle`, `text`—auto-detected from the file extension or passed explicitly via `fmt=`.
+Supported formats: `json`, `yaml` _(extra)_, `csv`, `tsv`, `parquet` _(extra)_, `excel` _(extra)_, `feather` _(extra)_, `avro` _(extra)_, `pickle`, `text`—auto-detected from the file extension or passed explicitly via `fmt=`.
+
+`parquet`, `excel`, `feather`, and `avro` are read/written with [polars](https://docs.pola.rs/api/python/stable/reference/io.html) (`pl.read_parquet`/`write_parquet`, etc.)—not pandas—so `partition.read(...)` on these formats returns a `polars.DataFrame`. Install the extra you need: `pip install -e '.[parquet]'` (polars) or `pip install -e '.[excel]'` (polars + fastexcel + xlsxwriter).
 
 ```python
 partition.write("report.json", {"rows": 42}, atomic=True, backup=True)
@@ -151,7 +153,7 @@ partition.inspect(obj_or_path, sample=3, **kwargs) -> dict
 partition.head(obj_or_path, n=5, **kwargs) -> Any
 ```
 
-Works on file paths, lists, dicts, strings, and pandas DataFrames (if installed). Automatically redacts values whose keys look like secrets (`*_key`, `*_token`, `*_secret`, `*_password`, etc.):
+Works on file paths, lists, dicts, strings, and `polars.DataFrame` objects (if polars is installed—e.g. from reading `parquet`/`excel`/`feather`/`avro`). Automatically redacts values whose keys look like secrets (`*_key`, `*_token`, `*_secret`, `*_password`, etc.):
 
 ```python
 partition.inspect({"user": "alice", "api_key": "sk-live-..."})

@@ -162,22 +162,110 @@ def _write_tsv(p: Path, data: Any, kwargs: dict) -> None:
 
 
 def _read_parquet(p: Path, kwargs: dict) -> Any:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#parquet),
+    # rather than pandas/pyarrow: polars ships its own native, multithreaded
+    # Rust parquet reader, so no separate pyarrow install is required.
     try:
-        import pyarrow.parquet as pq
+        import polars as pl
     except ImportError as exc:  # pragma: no cover
         raise MissingDependencyError(
             "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
-    return pq.read_table(p).to_pandas()
+    columns = kwargs.get("columns")
+    n_rows = kwargs.get("n_rows")
+    row_index_name = kwargs.get("row_index_name")
+    read_kwargs: Dict[str, Any] = {}
+    if columns is not None:
+        read_kwargs["columns"] = columns
+    if n_rows is not None:
+        read_kwargs["n_rows"] = n_rows
+    if row_index_name is not None:
+        read_kwargs["row_index_name"] = row_index_name
+    return pl.read_parquet(p, **read_kwargs)
 
 
 def _write_parquet(p: Path, data: Any, kwargs: dict) -> None:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#parquet).
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+        import polars as pl
     except ImportError as exc:  # pragma: no cover
         raise MissingDependencyError(
             "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
-    pq.write_table(pa.Table.from_pandas(data), p)
+    compression = kwargs.get("compression", "zstd")
+    if isinstance(data, pl.DataFrame):
+        df = data
+    elif isinstance(data, pl.LazyFrame):
+        df = data.collect()
+    elif type(data).__name__ == "DataFrame" and type(data).__module__.startswith("pandas"):
+        # Accept a pandas DataFrame too, for callers migrating existing pandas code.
+        df = pl.from_pandas(data)
+    else:
+        df = pl.DataFrame(data)
+    df.write_parquet(p, compression=compression)
+
+
+def _read_excel(p: Path, kwargs: dict) -> Any:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#excel).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[excel]'") from exc
+    sheet_name = kwargs.get("sheet_name")
+    return pl.read_excel(p, sheet_name=sheet_name) if sheet_name else pl.read_excel(p)
+
+
+def _write_excel(p: Path, data: Any, kwargs: dict) -> None:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#excel).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[excel]'") from exc
+    df = data if isinstance(data, pl.DataFrame) else pl.DataFrame(data)
+    worksheet = kwargs.get("worksheet", "Sheet1")
+    df.write_excel(p, worksheet=worksheet)
+
+
+def _read_feather(p: Path, kwargs: dict) -> Any:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#ipc-feather).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
+    return pl.read_ipc(p)
+
+
+def _write_feather(p: Path, data: Any, kwargs: dict) -> None:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#ipc-feather).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
+    df = data if isinstance(data, pl.DataFrame) else pl.DataFrame(data)
+    df.write_ipc(p, compression=kwargs.get("compression", "zstd"))
+
+
+def _read_avro(p: Path, kwargs: dict) -> Any:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#avro).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
+    return pl.read_avro(p)
+
+
+def _write_avro(p: Path, data: Any, kwargs: dict) -> None:
+    # Backed by polars (https://docs.pola.rs/api/python/stable/reference/io.html#avro).
+    try:
+        import polars as pl
+    except ImportError as exc:  # pragma: no cover
+        raise MissingDependencyError(
+            "Optional dependency missing; install with: pip install -e '.[parquet]'") from exc
+    df = data if isinstance(data, pl.DataFrame) else pl.DataFrame(data)
+    df.write_avro(p)
 
 
 def _read_pickle(p: Path, kwargs: dict) -> Any:
@@ -204,6 +292,9 @@ REGISTRY: Dict[str, FormatHandler] = {
     "csv": FormatHandler("csv", _read_csv, _write_csv),
     "tsv": FormatHandler("tsv", _read_tsv, _write_tsv),
     "parquet": FormatHandler("parquet", _read_parquet, _write_parquet),
+    "excel": FormatHandler("excel", _read_excel, _write_excel),
+    "feather": FormatHandler("feather", _read_feather, _write_feather),
+    "avro": FormatHandler("avro", _read_avro, _write_avro),
     "pickle": FormatHandler("pickle", _read_pickle, _write_pickle),
     "text": FormatHandler("text", _read_text, _write_text),
 }
@@ -215,6 +306,11 @@ _EXT_MAP = {
     ".csv": "csv",
     ".tsv": "tsv",
     ".parquet": "parquet",
+    ".xlsx": "excel",
+    ".xls": "excel",
+    ".feather": "feather",
+    ".ipc": "feather",
+    ".avro": "avro",
     ".pkl": "pickle",
     ".pickle": "pickle",
     ".txt": "text",

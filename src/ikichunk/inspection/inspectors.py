@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+from os import PathLike
 from pathlib import Path
 from typing import Any
 
@@ -10,14 +11,22 @@ _SECRET_KEY_PATTERNS = ("_key", "_token", "_secret",
                         "_password", "password", "secret", "token")
 
 
-def redact(d: dict) -> dict:
-    out = {}
-    for key, value in d.items():
-        if any(pattern in str(key).lower() for pattern in _SECRET_KEY_PATTERNS):
-            out[key] = "<redacted>"
-        else:
-            out[key] = value
-    return out
+def redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if any(pattern in str(key).lower() for pattern in _SECRET_KEY_PATTERNS):
+                out[key] = "<redacted>"
+            else:
+                out[key] = redact(item)
+        return out
+    if isinstance(value, list):
+        return [redact(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact(item) for item in value)
+    if isinstance(value, set):
+        return {redact(item) for item in value}
+    return value
 
 
 @functools.singledispatch
@@ -29,7 +38,7 @@ def _inspect_obj(obj: Any, sample: int = 3) -> dict:
 def _inspect_list(obj: list, sample: int = 3) -> dict:
     info = {"type": "list", "length": len(obj)}
     if obj:
-        info["sample"] = obj[:sample]
+        info["sample"] = redact(obj[:sample])
     return info
 
 
@@ -48,9 +57,34 @@ def register_inspector(python_type, func) -> None:
     _inspect_obj.register(python_type, func)
 
 
+def _inspect_dataframe(obj: Any, sample: int = 3) -> dict:
+    sample_rows = [redact(row) for row in obj.head(sample).to_dicts()]
+    return {
+        "type": "DataFrame",
+        "shape": tuple(obj.shape),
+        "columns": list(obj.columns),
+        "dtypes": {name: str(dtype) for name, dtype in zip(obj.columns, obj.dtypes)},
+        "sample": sample_rows,
+    }
+
+
+def _register_polars_inspector() -> None:
+    try:
+        import polars as pl
+    except ImportError:
+        return
+    if pl.DataFrame not in _inspect_obj.registry:
+        register_inspector(pl.DataFrame, _inspect_dataframe)
+
+
+_register_polars_inspector()
+
+
 def inspect(obj_or_path: Any, sample: int = 3, **kwargs) -> dict:
-    if isinstance(obj_or_path, str) and Path(obj_or_path).exists():
-        return _inspect_obj(_io_read(obj_or_path), sample=sample)
+    if isinstance(obj_or_path, (str, PathLike)):
+        path = Path(obj_or_path)
+        if path.exists():
+            return _inspect_obj(_io_read(str(path)), sample=sample)
     return _inspect_obj(obj_or_path, sample=sample)
 
 

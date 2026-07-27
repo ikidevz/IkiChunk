@@ -1,6 +1,6 @@
 [project]
 name = "ikichunk"
-version = "1.0.0"
+version = "1.1.1"
 description = "Enterprise-portable Swiss-army-knife scripting toolkit for data engineering and systems automation."
 readme = { file = "README.MD", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -26,9 +26,13 @@ dependencies = []
 
 [project.optional-dependencies]
 yaml = ["PyYAML>=6.0"]
-parquet = ["pyarrow>=14.0"]
+# Tabular formats (parquet/feather/avro) are powered by polars' native Rust
+# IO engine (https://docs.pola.rs/api/python/stable/reference/io.html) rather
+# than pandas + pyarrow, so no separate pyarrow install is required.
+parquet = ["polars>=1.0"]
+excel = ["polars>=1.0", "fastexcel>=0.10", "xlsxwriter>=3.0"]
 zstd = ["zstandard>=0.22"]
-full = ["PyYAML>=6.0", "pyarrow>=14.0", "rich>=13.0", "tqdm>=4.0", "zstandard>=0.22"]
+full = ["PyYAML>=6.0", "polars>=1.0", "fastexcel>=0.10", "xlsxwriter>=3.0", "rich>=13.0", "tqdm>=4.0", "zstandard>=0.22"]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/ikichunk"
